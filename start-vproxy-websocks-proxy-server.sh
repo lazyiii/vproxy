@@ -1,6 +1,10 @@
+#!/bin/bash
+
 runtime="vproxy-runtime-linux"
 kcptunPort="8443"
 listenPort="443"
+
+echo "check and install missing softwares"
 
 # try to install softwares using apt-get
 apt-get install -qq curl wget lsof procps 1>/dev/null 2>/dev/null
@@ -40,17 +44,18 @@ else
 	echo "runtime tar extracted"
 fi
 
-version=`curl https://raw.githubusercontent.com/wkgcass/vproxy/master/src/main/java/net/cassite/vproxy/app/Application.java 2>/dev/null | grep '_THE_VERSION_' | awk '{print $3}' | cut -d '"' -f 2`
+version=`curl https://raw.githubusercontent.com/wkgcass/vproxy/master/src/main/java/vproxy/app/Application.java 2>/dev/null | grep '_THE_VERSION_' | awk '{print $3}' | cut -d '"' -f 2`
 jar_name="vproxy-$version.jar"
 
-check=`ls "$jar_name" 2>/dev/null`
+check=`ls vproxy.jar 2>/dev/null`
 
 if [ -z "$check" ]
 then
 	echo "Getting $jar_name"
+	rm -f "$jar_name"
 	rm -f vproxy.jar
 	wget -q "https://github.com/wkgcass/vproxy/releases/download/$version/$jar_name"
-	cp "$jar_name" vproxy.jar
+	mv "$jar_name" vproxy.jar
 else
 	echo "vproxy.jar exists"
 fi
@@ -108,7 +113,15 @@ fi
 
 cd ../
 
+# p12 password
+read -p "PKCS12 file password: " pswd
+# user
+read -p "your username: " user
+# pass
+read -p "your password: " pass
+
 check=`ps aux | grep server_linux_amd64 | grep -v grep`
+kcptunpid=""
 
 if [ -z "$check" ]
 then
@@ -118,6 +131,8 @@ then
 	then
 		echo "launching kcptun"
 		kcptun/server_linux_amd64 -t "127.0.0.1:$listenPort" -l ":$kcptunPort" -mode fast3 -nocomp -dscp 46 &
+		kcptunpid=`echo $!`
+		echo "kcptun started on pid $kcptunpid"
 	else
 		echo "udp port :$kcptunPort already bond"
 		exit 1
@@ -130,17 +145,14 @@ version=`"$runtime/bin/java" -jar vproxy.jar version`
 
 echo "current vproxy version: $version"
 
-# p12 password
-read -p "PKCS12 file password: " pswd
-# user
-read -p "your username: " user
-# pass
-read -p "your password: " pass
-
 echo "launching..."
 echo "README: It's recommended to run this application inside tmux."
 
 "$runtime/bin/java" -Deploy=WebSocksProxyServer -jar vproxy.jar listen "$listenPort" ssl pkcs12 certkey.p12 pkcs12pswd "$pswd" auth "$user:$pass"
 
 # kill kcptun after java exits
-pkill server_linux_amd64
+if [[ ! -z "$kcptunpid" ]]
+then
+	echo "kill kcptun $kcptunpid"
+	kill $kcptunpid
+fi
